@@ -19,6 +19,7 @@ vet:
 
 test: fmt vet
 	go build -o /dev/null .
+	go test ./...
 
 clean:
 	rm -f $(BINARY)

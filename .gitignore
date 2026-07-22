@@ -1,1 +1,11 @@
 /cpgo
+
+*.db
+
+/target
+/result
+/data/
+
+dist/
+tmp/
+
