@@ -1,0 +1,71 @@
+#!/usr/bin/env python3
+
+import sys
+from pathlib import Path
+
+from search_replace import apply_diff
+from search_replace.errors import ParseError
+
+
+def main():
+    diff_text = sys.stdin.read().strip()
+
+    chat_files = sys.argv[1:] or None
+
+    if chat_files:
+        if len(chat_files) != 1:
+            print(
+                "Usage: apply-diff.py <file>\n"
+                "Example:\n"
+                "wl-paste | scripts/.venv/bin/python scripts/apply-diff.py mathweb/flask/app.py",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+
+        path = chat_files[0]
+
+        llm_response = path + "\n```\n" + diff_text + "\n```\n"
+    else:
+        llm_response = diff_text
+
+    try:
+        result = apply_diff(
+            llm_response,
+            root=Path("."),
+            chat_files=chat_files,
+        )
+        print(result)
+
+    except ParseError as e:
+        print(
+            "\nFailed to parse SEARCH/REPLACE block.\n",
+            file=sys.stderr,
+        )
+
+        print(
+            "Expected input:\n"
+            "<<<<<<< SEARCH\n"
+            "old text\n"
+            "=======\n"
+            "new text\n"
+            ">>>>>>> REPLACE\n",
+            file=sys.stderr,
+        )
+
+        if not chat_files:
+            print(
+                "When no filename argument is supplied, "
+                "the input must also contain a filename.",
+                file=sys.stderr,
+            )
+
+        print(f"\nOriginal error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    except Exception as e:
+        print(f"Failed to apply diff: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

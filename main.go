@@ -46,7 +46,7 @@ func run(args []string) int {
 
 	info, err := os.Stat(src)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "cpgo: %v\n", err)
+		logger.Error(err)
 		return 1
 	}
 
@@ -69,7 +69,7 @@ func run(args []string) int {
 	}
 
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "cpgo: %v\n", err)
+		logger.Error(err)
 		return 1
 	}
 	return 0

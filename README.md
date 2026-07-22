@@ -63,6 +63,13 @@ purpose is to guarantee correctness rather than to be fast on repeat runs.
 - **Ownership** (`chown`) is attempted on a best-effort basis: if the process
   lacks permission (not running as root), that specific step is skipped
   without failing the whole file.
+- **Confirmed corruption stops the run immediately.** If a checksum mismatch
+  survives every retry, that's treated as evidence of a real problem (bad
+  storage, bad RAM, etc.), not just a bad file, so cpgo aborts the whole sync
+  right away instead of pressing on — remaining files, hardlink recreation,
+  attribute fixup and deletion are all skipped. Errors are printed via
+  logrus; confirmed corruption is logged at error level (red), other
+  per-file failures at warning level (yellow).
 - **Not implemented**: extended attributes (xattr) and ACLs, and special
   files (device nodes, FIFOs, sockets). These were left out to keep the
   implementation dependency-free and simple; the standard library doesn't

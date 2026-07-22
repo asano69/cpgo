@@ -15,9 +15,10 @@
             pname = "cpgo";
             version = "0.1.0";
             src = ./.;
-            # No external Go dependencies (stdlib only), so this is stable
-            # even if go.sum doesn't exist yet.
-            vendorHash = null;
+            # logrus (and its golang.org/x/sys dependency) is now vendored,
+            # so this needs a real hash. `nix build` will fail with the
+            # correct value on first run; paste it in here once you have it.
+            vendorHash = pkgs.lib.fakeHash;
           };
         });
 

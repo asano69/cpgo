@@ -35,8 +35,7 @@ func runSyncSingleFile(src, dst string, opts Options) error {
 	syncErr := syncFile(src, destPath, srcInfo, opts, prog)
 	prog.DoneFiles.Add(1)
 	if syncErr != nil {
-		fmt.Fprintf(os.Stderr, "cpgo: %v\n", syncErr)
-		prog.Failed.Add(1)
+		handleFileSyncError(prog, filepath.Base(src), syncErr)
 	}
 
 	stopProgress()

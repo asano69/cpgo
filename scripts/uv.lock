@@ -1,0 +1,23 @@
+version = 1
+revision = 3
+requires-python = ">=3.14"
+
+[[package]]
+name = "scripts"
+version = "0.1.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "search-replace-py" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "search-replace-py", specifier = ">=0.0.2" }]
+
+[[package]]
+name = "search-replace-py"
+version = "0.0.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/46/fa/ad54b795d34c052bea240362bc8a6f076945c5523fa4f380bbb2662ee9a0/search_replace_py-0.0.2.tar.gz", hash = "sha256:8faad502bf45a920df08ac8f5f9a4fff6d456de9efc48a456ca36d9cb83b868d", size = 866305, upload-time = "2026-03-02T12:21:43.721Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d1/54/eebfbdf4968db8dfa1445d82efd3aef812b87153f7731f7ea2fdb10869f3/search_replace_py-0.0.2-py3-none-any.whl", hash = "sha256:4c00b80832d527f50ad1a56ac9b29339d169ed87f3cda44e916686c9c034479d", size = 16284, upload-time = "2026-03-02T12:21:41.736Z" },
+]

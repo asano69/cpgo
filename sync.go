@@ -14,6 +14,12 @@ import (
 	"syscall"
 )
 
+// ErrChecksumMismatch means a freshly written copy was re-read and re-hashed
+// but did not match the source. This is treated as confirmed file
+// corruption (bad storage, bad RAM, etc.), distinct from ordinary I/O
+// errors, and is what triggers Progress.triggerAbort.
+var ErrChecksumMismatch = errors.New("checksum mismatch after copy: destination does not match source")
+
 // Options controls how the sync runs.
 type Options struct {
 	Delete  bool // remove destination entries that no longer exist in the source
@@ -30,6 +36,30 @@ type Progress struct {
 	TotalFiles int64
 	DoneFiles  atomic.Int64
 	Failed     atomic.Int64
+
+	// abortMu guards abortErr, which is set the moment confirmed file
+	// corruption is detected. Once set, the rest of the sync stops as soon
+	// as possible instead of continuing on to other files.
+	abortMu  sync.Mutex
+	abortErr error
+}
+
+// triggerAbort records err as the reason to stop, if nothing has triggered
+// an abort yet. Safe to call from multiple goroutines.
+func (p *Progress) triggerAbort(err error) {
+	p.abortMu.Lock()
+	defer p.abortMu.Unlock()
+	if p.abortErr == nil {
+		p.abortErr = err
+	}
+}
+
+// aborted reports whether a confirmed corruption has already triggered a
+// stop, and if so, the first reported reason.
+func (p *Progress) aborted() (bool, error) {
+	p.abortMu.Lock()
+	defer p.abortMu.Unlock()
+	return p.abortErr != nil, p.abortErr
 }
 
 // runSync mirrors src into dst according to opts, printing progress as it goes.
@@ -82,6 +112,9 @@ func runSync(src, dst string, opts Options) error {
 
 	for _, e := range tree.Entries {
 		e := e
+		if aborted, _ := prog.aborted(); aborted {
+			break // confirmed corruption elsewhere: stop scheduling new work
+		}
 		if e.IsDir {
 			continue
 		}
@@ -93,7 +126,7 @@ func runSync(src, dst string, opts Options) error {
 
 		if e.IsSymlink {
 			if err := syncSymlink(srcPath, destPath, e.Info, opts); err != nil {
-				fmt.Fprintf(os.Stderr, "cpgo: symlink %s: %v\n", e.RelPath, err)
+				logger.WithError(err).Warnf("symlink %s", e.RelPath)
 				prog.Failed.Add(1)
 			}
 			prog.DoneFiles.Add(1)
@@ -106,13 +139,20 @@ func runSync(src, dst string, opts Options) error {
 			defer wg.Done()
 			defer func() { <-sem }()
 			if err := syncFile(srcPath, destPath, e.Info, opts, prog); err != nil {
-				fmt.Fprintf(os.Stderr, "cpgo: %s: %v\n", e.RelPath, err)
-				prog.Failed.Add(1)
+				handleFileSyncError(prog, e.RelPath, err)
 			}
 			prog.DoneFiles.Add(1)
 		}()
 	}
 	wg.Wait()
+
+	// Confirmed corruption stops everything immediately: skip hardlinks,
+	// attribute fixup and deletion entirely rather than pressing on.
+	if aborted, abortErr := prog.aborted(); aborted {
+		stopProgress()
+		printFinalSummary(prog)
+		return fmt.Errorf("stopped: %w", abortErr)
+	}
 
 	// Pass B2: recreate hardlinks now that every primary file has been copied.
 	// Sorting keeps this deterministic; it's cheap so it stays sequential.
@@ -129,7 +169,7 @@ func runSync(src, dst string, opts Options) error {
 			continue
 		}
 		if err := syncHardlink(primaryDestPath, destPath); err != nil {
-			fmt.Fprintf(os.Stderr, "cpgo: hardlink %s: %v\n", rel, err)
+			logger.WithError(err).Warnf("hardlink %s", rel)
 			prog.Failed.Add(1)
 		}
 		prog.DoneFiles.Add(1)
@@ -147,7 +187,7 @@ func runSync(src, dst string, opts Options) error {
 			continue
 		}
 		if err := setAttrs(destPath, e.Info, false); err != nil {
-			fmt.Fprintf(os.Stderr, "cpgo: attrs %s: %v\n", e.RelPath, err)
+			logger.WithError(err).Warnf("attrs %s", e.RelPath)
 		}
 	}
 
@@ -193,7 +233,7 @@ func syncFile(srcPath, destPath string, srcInfo fs.FileInfo, opts Options, prog 
 	var lastErr error
 	for i := 0; i < attempts; i++ {
 		if i > 0 && opts.Verbose {
-			fmt.Fprintf(os.Stderr, "cpgo: retrying %s (attempt %d/%d)\n", destPath, i+1, attempts)
+			logger.Infof("retrying %s (attempt %d/%d)", destPath, i+1, attempts)
 		}
 		var attemptBytes int64
 		_, err := copyVerified(srcPath, destPath, srcInfo, func(n int64) {
@@ -207,6 +247,20 @@ func syncFile(srcPath, destPath string, srcInfo fs.FileInfo, opts Options, prog 
 		lastErr = err
 	}
 	return fmt.Errorf("copy failed after %d attempts: %w", attempts, lastErr)
+}
+
+// handleFileSyncError records a per-file failure and decides what it means
+// for the sync as a whole: confirmed corruption (a checksum mismatch) is
+// logged as an error and stops the whole run via prog.triggerAbort; anything
+// else is logged as a warning and the sync carries on to other files.
+func handleFileSyncError(prog *Progress, relPath string, err error) {
+	prog.Failed.Add(1)
+	if errors.Is(err, ErrChecksumMismatch) {
+		logger.WithError(err).Errorf("file corruption detected: %s", relPath)
+		prog.triggerAbort(fmt.Errorf("file corruption detected: %s: %w", relPath, err))
+		return
+	}
+	logger.WithError(err).Warnf("%s", relPath)
 }
 
 // isUpToDate decides whether destPath already holds a correct copy of
@@ -286,7 +340,7 @@ func copyVerified(srcPath, destPath string, srcInfo fs.FileInfo, onBytes func(in
 		return 0, err
 	}
 	if dstSum != fmt.Sprintf("%x", srcHash.Sum(nil)) {
-		return 0, errors.New("checksum mismatch after copy: destination does not match source")
+		return 0, ErrChecksumMismatch
 	}
 
 	if err := os.Rename(tmpPath, destPath); err != nil {
