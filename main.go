@@ -1,6 +1,6 @@
-// Command cpgo mirrors one directory tree onto another, verifying every
-// copied file by re-reading and re-hashing it from disk, and resuming
-// cleanly if interrupted.
+// Command cpgo copies files with checksum verification, resuming cleanly if
+// interrupted. Given a directory, it mirrors the whole tree; given a single
+// file, it copies just that file.
 package main
 
 import (
@@ -19,15 +19,17 @@ func run(args []string) int {
 	fs := flag.NewFlagSet("cpgo", flag.ContinueOnError)
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "usage: cpgo [flags] <src> <dst>\n\n")
-		fmt.Fprintf(os.Stderr, "Mirrors the contents of <src> into <dst>: copies what's missing or\n")
-		fmt.Fprintf(os.Stderr, "changed, verifies every copy by checksum, and (by default) removes\n")
-		fmt.Fprintf(os.Stderr, "anything in <dst> that no longer exists in <src>.\n\n")
+		fmt.Fprintf(os.Stderr, "If <src> is a directory, mirrors its contents into <dst>: copies what's\n")
+		fmt.Fprintf(os.Stderr, "missing or changed, and (by default) removes anything in <dst> that no\n")
+		fmt.Fprintf(os.Stderr, "longer exists in <src>. If <src> is a single file, copies just that file\n")
+		fmt.Fprintf(os.Stderr, "(into <dst> if it's a directory, or to the exact path <dst> otherwise).\n")
+		fmt.Fprintf(os.Stderr, "Every copy is verified by checksum, with no way to disable it.\n\n")
 		fs.PrintDefaults()
 	}
 
-	noDelete := fs.Bool("no-delete", false, "don't delete files in <dst> that are missing from <src>")
+	noDelete := fs.Bool("no-delete", false, "don't delete files in <dst> that are missing from <src> (directory mode only)")
 	dryRun := fs.Bool("dry-run", false, "show what would be done without changing anything")
-	jobs := fs.Int("jobs", runtime.NumCPU(), "number of files to copy concurrently")
+	jobs := fs.Int("jobs", runtime.NumCPU(), "number of files to copy concurrently (directory mode only)")
 	retries := fs.Int("retries", 2, "extra attempts if a copy fails checksum verification")
 	verbose := fs.Bool("verbose", false, "print each action taken")
 
@@ -47,10 +49,6 @@ func run(args []string) int {
 		fmt.Fprintf(os.Stderr, "cpgo: %v\n", err)
 		return 1
 	}
-	if !info.IsDir() {
-		fmt.Fprintf(os.Stderr, "cpgo: %s is not a directory\n", src)
-		return 1
-	}
 
 	opts := Options{
 		Delete:  !*noDelete,
@@ -60,7 +58,17 @@ func run(args []string) int {
 		Verbose: *verbose,
 	}
 
-	if err := runSync(src, dst, opts); err != nil {
+	switch {
+	case info.IsDir():
+		err = runSync(src, dst, opts)
+	case info.Mode().IsRegular():
+		err = runSyncSingleFile(src, dst, opts)
+	default:
+		fmt.Fprintf(os.Stderr, "cpgo: %s: unsupported file type\n", src)
+		return 1
+	}
+
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "cpgo: %v\n", err)
 		return 1
 	}

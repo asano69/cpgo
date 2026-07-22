@@ -1,6 +1,4 @@
-
 # cpgo
-
 GoでCLI、ミラーツールcpgoをつくりたい。要件は
 
 * 目的はチェックサム検知で絶対にコピー中にファイルが壊れていることを検出する
@@ -8,15 +6,19 @@ GoでCLI、ミラーツールcpgoをつくりたい。要件は
 * 全体進捗がわかる。
 * 所有権、パーミション、リンクなど、できるだけ多くの属性をクローンする
 
-# cpgo
-
 Checksum-verified mirroring copy tool.
 
 ```
 cpgo [flags] <src> <dst>
 ```
 
-Mirrors the contents of `<src>` into `<dst>`:
+If `<src>` is a directory, mirrors its contents into `<dst>`. If `<src>` is a
+single file, copies just that file — into `<dst>` if it's an existing
+directory (keeping the original filename), or to the exact path `<dst>`
+otherwise, creating parent directories as needed. Both modes share the same
+checksum-verified, resumable copy logic.
+
+Directory mode:
 - copies files that are missing or changed
 - **checksum verification is always on, with no way to disable it** — this
   is a safety tool, not a speed tool. Every file, whether newly copied or
@@ -35,9 +37,9 @@ Mirrors the contents of `<src>` into `<dst>`:
 
 | Flag          | Default   | Meaning                                                            |
 |---------------|-----------|---------------------------------------------------------------------|
-| `-no-delete`  | false     | keep extra files in `<dst>` instead of removing them                |
+| `-no-delete`  | false     | keep extra files in `<dst>` instead of removing them (directory mode only) |
 | `-dry-run`    | false     | print what would happen without touching anything                   |
-| `-jobs`       | NumCPU    | number of files copied concurrently                                  |
+| `-jobs`       | NumCPU    | number of files copied concurrently (directory mode only)             |
 | `-retries`    | 2         | extra attempts after a checksum mismatch before giving up on a file  |
 | `-verbose`    | false     | print each action taken                                              |
 

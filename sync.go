@@ -50,6 +50,12 @@ func runSync(src, dst string, opts Options) error {
 	stopProgress := startProgressPrinter(prog, opts)
 	defer stopProgress()
 
+	if !opts.DryRun {
+		if err := os.MkdirAll(dst, 0o755); err != nil {
+			return fmt.Errorf("mkdir %s: %w", dst, err)
+		}
+	}
+
 	// Pass A: create every directory first, so files and symlinks always have
 	// somewhere to land. Attributes are fixed up afterwards in pass C, since
 	// writing into a directory changes its mtime.
@@ -189,11 +195,15 @@ func syncFile(srcPath, destPath string, srcInfo fs.FileInfo, opts Options, prog 
 		if i > 0 && opts.Verbose {
 			fmt.Fprintf(os.Stderr, "cpgo: retrying %s (attempt %d/%d)\n", destPath, i+1, attempts)
 		}
-		n, err := copyVerified(srcPath, destPath, srcInfo)
-		if err == nil {
+		var attemptBytes int64
+		_, err := copyVerified(srcPath, destPath, srcInfo, func(n int64) {
+			attemptBytes += n
 			prog.DoneBytes.Add(n)
+		})
+		if err == nil {
 			return setAttrs(destPath, srcInfo, false)
 		}
+		prog.DoneBytes.Add(-attemptBytes) // undo this attempt's partial progress before retrying
 		lastErr = err
 	}
 	return fmt.Errorf("copy failed after %d attempts: %w", attempts, lastErr)
@@ -231,9 +241,10 @@ func isUpToDate(srcPath, destPath string, srcInfo fs.FileInfo) (bool, error) {
 
 // copyVerified copies srcPath into a temp file next to destPath, verifies the
 // bytes actually landed on disk correctly by re-reading and re-hashing the
-// temp file, and only then renames it into place. It returns the number of
-// bytes copied on success.
-func copyVerified(srcPath, destPath string, srcInfo fs.FileInfo) (int64, error) {
+// temp file, and only then renames it into place. onBytes is called as data
+// is read from the source, so callers can drive a live progress display; it
+// may be nil. It returns the number of bytes copied on success.
+func copyVerified(srcPath, destPath string, srcInfo fs.FileInfo, onBytes func(int64)) (int64, error) {
 	srcFile, err := os.Open(srcPath)
 	if err != nil {
 		return 0, err
@@ -248,7 +259,11 @@ func copyVerified(srcPath, destPath string, srcInfo fs.FileInfo) (int64, error) 
 	defer os.Remove(tmpPath) // no-op once renamed away
 
 	srcHash := sha256.New()
-	n, err := io.Copy(tmpFile, io.TeeReader(srcFile, srcHash))
+	var reader io.Reader = io.TeeReader(srcFile, srcHash)
+	if onBytes != nil {
+		reader = &countingReader{r: reader, onRead: onBytes}
+	}
+	n, err := io.Copy(tmpFile, reader)
 	if err != nil {
 		tmpFile.Close()
 		return 0, err
@@ -278,6 +293,21 @@ func copyVerified(srcPath, destPath string, srcInfo fs.FileInfo) (int64, error) 
 		return 0, err
 	}
 	return n, nil
+}
+
+// countingReader calls onRead with the number of bytes returned by each Read,
+// letting callers observe progress as an io.Copy loop consumes r.
+type countingReader struct {
+	r      io.Reader
+	onRead func(int64)
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	if n > 0 {
+		c.onRead(int64(n))
+	}
+	return n, err
 }
 
 func hashFile(path string) (string, error) {
