@@ -26,7 +26,6 @@ func run(args []string) int {
 	}
 
 	noDelete := fs.Bool("no-delete", false, "don't delete files in <dst> that are missing from <src>")
-	checksumAll := fs.Bool("checksum", false, "also verify already-present files by content hash, not just size+mtime")
 	dryRun := fs.Bool("dry-run", false, "show what would be done without changing anything")
 	jobs := fs.Int("jobs", runtime.NumCPU(), "number of files to copy concurrently")
 	retries := fs.Int("retries", 2, "extra attempts if a copy fails checksum verification")
@@ -54,12 +53,11 @@ func run(args []string) int {
 	}
 
 	opts := Options{
-		Delete:      !*noDelete,
-		ChecksumAll: *checksumAll,
-		DryRun:      *dryRun,
-		Jobs:        *jobs,
-		Retries:     *retries,
-		Verbose:     *verbose,
+		Delete:  !*noDelete,
+		DryRun:  *dryRun,
+		Jobs:    *jobs,
+		Retries: *retries,
+		Verbose: *verbose,
 	}
 
 	if err := runSync(src, dst, opts); err != nil {

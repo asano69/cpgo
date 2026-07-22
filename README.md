@@ -6,9 +6,9 @@ GoでCLI、ミラーツールcpgoをつくりたい。要件は
 * 目的はチェックサム検知で絶対にコピー中にファイルが壊れていることを検出する
 * コピーが中断しても途中から再開可能で、冪等性がある。deleteつきの差分コピー
 * 全体進捗がわかる。
-<<<<<<< HEAD
 * 所有権、パーミション、リンクなど、できるだけ多くの属性をクローンする
 
+# cpgo
 
 Checksum-verified mirroring copy tool.
 
@@ -18,8 +18,13 @@ cpgo [flags] <src> <dst>
 
 Mirrors the contents of `<src>` into `<dst>`:
 - copies files that are missing or changed
-- verifies every copy by re-reading the destination from disk and comparing
-  a SHA-256 hash against the source, retrying on mismatch
+- **checksum verification is always on, with no way to disable it** — this
+  is a safety tool, not a speed tool. Every file, whether newly copied or
+  already present at the destination, is confirmed by hashing (SHA-256) both
+  the source and the destination and comparing, retrying on mismatch.
+  Metadata (size/mtime) is only ever used as a cheap pre-filter to skip
+  hashing a file whose size obviously differs; it is never treated as proof
+  that a file is correct on its own.
 - deletes anything in `<dst>` that no longer exists in `<src>` (unless
   `-no-delete` is given)
 - preserves permissions, ownership (uid/gid), modification time, symlinks
@@ -31,11 +36,15 @@ Mirrors the contents of `<src>` into `<dst>`:
 | Flag          | Default   | Meaning                                                            |
 |---------------|-----------|---------------------------------------------------------------------|
 | `-no-delete`  | false     | keep extra files in `<dst>` instead of removing them                |
-| `-checksum`   | false     | also hash already-present files instead of trusting size+mtime      |
 | `-dry-run`    | false     | print what would happen without touching anything                   |
 | `-jobs`       | NumCPU    | number of files copied concurrently                                  |
 | `-retries`    | 2         | extra attempts after a checksum mismatch before giving up on a file  |
 | `-verbose`    | false     | print each action taken                                              |
+
+Note: because every already-present file is re-hashed on every run, a large
+already-synced tree costs one full read pass through both `<src>` and `<dst>`
+even when nothing changed. That's the deliberate tradeoff for a tool whose
+purpose is to guarantee correctness rather than to be fast on repeat runs.
 
 ## Design notes / tradeoffs
 
@@ -49,11 +58,6 @@ Mirrors the contents of `<src>` into `<dst>`:
   atomic rename, and only after their checksum has been confirmed by reading
   them back from disk. So re-running `cpgo` after any kind of interruption
   converges on the same correct result.
-- **Skip decision**: by default, a file is considered already in sync if its
-  size and modification time match. This avoids re-hashing an entire tree on
-  every run. Pass `-checksum` to also verify existing files' content, which
-  catches destination-side corruption or manual tampering at the cost of
-  reading every file on both sides.
 - **Ownership** (`chown`) is attempted on a best-effort basis: if the process
   lacks permission (not running as root), that specific step is skipped
   without failing the whole file.
@@ -78,4 +82,3 @@ With Nix (flake included, targets `nixos-26.05`):
 nix build
 ./result/bin/cpgo --help
 ```
->>>>>>> 6611837 (init)

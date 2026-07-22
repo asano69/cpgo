@@ -16,12 +16,11 @@ import (
 
 // Options controls how the sync runs.
 type Options struct {
-	Delete      bool // remove destination entries that no longer exist in the source
-	ChecksumAll bool // hash already-present files too, instead of trusting size+mtime
-	DryRun      bool
-	Jobs        int // concurrent file copies
-	Retries     int // extra attempts after a checksum mismatch
-	Verbose     bool
+	Delete  bool // remove destination entries that no longer exist in the source
+	DryRun  bool
+	Jobs    int // concurrent file copies
+	Retries int // extra attempts after a checksum mismatch
+	Verbose bool
 }
 
 // Progress is shared, atomically-updated state used to render the progress line.
@@ -166,7 +165,7 @@ func runSync(src, dst string, opts Options) error {
 // permissions/ownership/mtime. It is safe to re-run: interrupted copies
 // leave a temp file that a later run simply overwrites.
 func syncFile(srcPath, destPath string, srcInfo fs.FileInfo, opts Options, prog *Progress) error {
-	if up, err := isUpToDate(srcPath, destPath, srcInfo, opts); err != nil {
+	if up, err := isUpToDate(srcPath, destPath, srcInfo); err != nil {
 		return err
 	} else if up {
 		prog.DoneBytes.Add(srcInfo.Size())
@@ -201,9 +200,11 @@ func syncFile(srcPath, destPath string, srcInfo fs.FileInfo, opts Options, prog 
 }
 
 // isUpToDate decides whether destPath already holds a correct copy of
-// srcPath, without touching the disk more than necessary. With
-// opts.ChecksumAll it hashes both files instead of trusting size+mtime.
-func isUpToDate(srcPath, destPath string, srcInfo fs.FileInfo, opts Options) (bool, error) {
+// srcPath. Size is checked first as a cheap exit (a size mismatch can never
+// be up to date), but whenever sizes do match, both files are fully hashed
+// and compared — this tool's whole point is to never trust metadata alone,
+// so mtime is not treated as sufficient evidence on its own.
+func isUpToDate(srcPath, destPath string, srcInfo fs.FileInfo) (bool, error) {
 	dstInfo, err := os.Lstat(destPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -216,9 +217,6 @@ func isUpToDate(srcPath, destPath string, srcInfo fs.FileInfo, opts Options) (bo
 	}
 	if dstInfo.Size() != srcInfo.Size() {
 		return false, nil
-	}
-	if !opts.ChecksumAll {
-		return dstInfo.ModTime().Equal(srcInfo.ModTime()), nil
 	}
 	srcSum, err := hashFile(srcPath)
 	if err != nil {
