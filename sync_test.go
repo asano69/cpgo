@@ -254,6 +254,35 @@ func (f fakeFileInfo) Sys() any {
 	return &syscall.Stat_t{Uid: f.uid, Gid: f.gid}
 }
 
+// TestWarnPermissionUnchanged_LogsWantedAndActualMode checks that a chmod
+// which fails for lack of permission is surfaced as a WARN log naming both
+// the mode that was wanted and what the file was actually left with,
+// instead of being silently swallowed or aborting the whole sync.
+func TestWarnPermissionUnchanged_LogsWantedAndActualMode(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "f.bin")
+	if err := os.WriteFile(path, []byte("x"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	logger.SetOutput(&buf)
+	defer logger.SetOutput(os.Stderr)
+
+	warnPermissionUnchanged(path, 0o755)
+
+	out := buf.String()
+	if !strings.Contains(strings.ToLower(out), "warn") {
+		t.Errorf("log output = %q, want a WARN-level entry", out)
+	}
+	if !strings.Contains(out, "755") {
+		t.Errorf("log output = %q, want it to mention the wanted mode (755)", out)
+	}
+	if !strings.Contains(out, "640") {
+		t.Errorf("log output = %q, want it to mention the actual mode (640)", out)
+	}
+}
+
 // TestSyncFile_FailsAfterRetriesExhausted checks the give-up path: when the
 // corruption is persistent (here, FileInfo that never matches the source on
 // disk, standing in for a source that's corrupted at every attempt), syncFile

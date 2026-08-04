@@ -466,7 +466,10 @@ func setAttrs(path string, info fs.FileInfo, isSymlink bool) error {
 	}
 
 	if err := os.Chmod(path, info.Mode().Perm()); err != nil {
-		return err
+		if !os.IsPermission(err) {
+			return err
+		}
+		warnPermissionUnchanged(path, info.Mode().Perm())
 	}
 	if err := os.Chown(path, int(st.Uid), int(st.Gid)); err != nil {
 		if !os.IsPermission(err) {
@@ -503,6 +506,23 @@ func warnOwnershipUnchanged(path string, wantUid, wantGid uint32, isSymlink bool
 	}
 	logger.Warnf("ownership not set on %s: wanted uid=%d gid=%d, left as uid=%d gid=%d (permission denied)",
 		path, wantUid, wantGid, actual.Uid, actual.Gid)
+}
+
+// warnPermissionUnchanged logs a chmod that failed for lack of permission
+// (i.e. the process owns neither the file nor is root), showing both the
+// mode that was wanted (from the source) and what the destination's mode
+// actually ended up being, so it's clear exactly how the copy diverges.
+// Modes are printed in octal (e.g. 755), matching how permissions are
+// normally written and how the user is likely to think of them.
+func warnPermissionUnchanged(path string, wantMode fs.FileMode) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		logger.Warnf("permissions not set on %s: wanted mode=%03o, and could not stat it afterward: %v",
+			path, wantMode.Perm(), err)
+		return
+	}
+	logger.Warnf("permissions not set on %s: wanted mode=%03o, left as mode=%03o (permission denied)",
+		path, wantMode.Perm(), fi.Mode().Perm())
 }
 
 func printFinalSummary(p *Progress) {
