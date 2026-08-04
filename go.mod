@@ -1,4 +1,4 @@
-module cpgo
+module github.com/asano69/cpgo
 
 go 1.22
 
