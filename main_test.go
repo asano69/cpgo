@@ -1,10 +1,68 @@
 package main
 
 import (
+	"bytes"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+// TestRun_VersionFlag_PrintsVersionAndReturnsZero checks that -version
+// prints the tool's version to stdout and exits 0, without requiring the
+// usual <src>... <dst> arguments.
+func TestRun_VersionFlag_PrintsVersionAndReturnsZero(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	origStdout := os.Stdout
+	os.Stdout = w
+	defer func() { os.Stdout = origStdout }()
+
+	code := run([]string{"-version"})
+
+	w.Close()
+	os.Stdout = origStdout
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+
+	if code != 0 {
+		t.Errorf("run([-version]) = %d, want 0", code)
+	}
+	if !strings.Contains(buf.String(), version) {
+		t.Errorf("output = %q, want it to contain version %q", buf.String(), version)
+	}
+}
+
+// TestRun_InsufficientArgs_UsageDescribesPurpose checks that the usage
+// message printed on invalid invocation includes a short description of
+// what cpgo is for, not just the flag syntax -- so `cpgo -h` alone tells a
+// new user what the tool does.
+func TestRun_InsufficientArgs_UsageDescribesPurpose(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	origStderr := os.Stderr
+	os.Stderr = w
+	defer func() { os.Stderr = origStderr }()
+
+	code := run([]string{})
+
+	w.Close()
+	os.Stderr = origStderr
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+
+	if code != 2 {
+		t.Errorf("run([]) = %d, want 2", code)
+	}
+	if !strings.Contains(buf.String(), "checksum-verified") {
+		t.Errorf("usage output = %q, want it to describe cpgo's purpose", buf.String())
+	}
+}
 
 // TestResolveDestDir_NestsIntoExistingDirectory checks the `cp -R`-style
 // destination resolution: when dst already exists as a directory, src is

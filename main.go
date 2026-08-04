@@ -14,6 +14,10 @@ import (
 	"strings"
 )
 
+// version is cpgo's release version, shown by -version. Keep this in sync
+// with the "version" field in flake.nix.
+const version = "0.1.0"
+
 func main() {
 	os.Exit(run(os.Args[1:]))
 }
@@ -21,6 +25,7 @@ func main() {
 func run(args []string) int {
 	fs := flag.NewFlagSet("cpgo", flag.ContinueOnError)
 	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, "cpgo: checksum-verified mirroring copy tool for archival use\n\n")
 		fmt.Fprintf(os.Stderr, "usage: cpgo [flags] <src>... <dst>\n\n")
 		fmt.Fprintf(os.Stderr, "Behaves like `cp -dR --preserve=all`, always. If <src> is a directory, it\n")
 		fmt.Fprintf(os.Stderr, "is copied recursively: into <dst>/<basename of src> if <dst> already exists\n")
@@ -39,9 +44,14 @@ func run(args []string) int {
 	jobs := fs.Int("jobs", runtime.NumCPU(), "number of files to copy concurrently (directory mode only)")
 	retries := fs.Int("retries", 2, "extra attempts if a copy fails checksum verification")
 	verbose := fs.Bool("verbose", false, "print each action taken")
+	showVersion := fs.Bool("version", false, "print the version number and exit")
 
 	if err := fs.Parse(args); err != nil {
 		return 2
+	}
+	if *showVersion {
+		fmt.Println("cpgo version", version)
+		return 0
 	}
 	if fs.NArg() < 2 {
 		fs.Usage()
