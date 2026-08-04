@@ -321,6 +321,22 @@ func copyVerified(srcPath, destPath string, srcInfo fs.FileInfo, onBytes func(in
 	tmpPath := tmpFile.Name()
 	defer os.Remove(tmpPath) // no-op once renamed away
 
+	// Reserve the full destination size up front. This does not double
+	// disk usage -- it just marks the blocks the write is about to fill
+	// as allocated, instead of letting the file grow one write at a
+	// time. The payoff is failing fast on ENOSPC before a large copy
+	// runs to completion, rather than discovering the disk is full
+	// after most of the bytes are already written. Filesystems that
+	// don't support fallocate (some network mounts) are left to grow
+	// the file the normal way.
+	if srcInfo.Size() > 0 {
+		if err := syscall.Fallocate(int(tmpFile.Fd()), 0, 0, srcInfo.Size()); err != nil &&
+			!errors.Is(err, syscall.ENOTSUP) && !errors.Is(err, syscall.EOPNOTSUPP) {
+			tmpFile.Close()
+			return 0, fmt.Errorf("preallocating %s: %w", tmpPath, err)
+		}
+	}
+
 	srcHash := sha256.New()
 	var reader io.Reader = io.TeeReader(srcFile, srcHash)
 	if onBytes != nil {
