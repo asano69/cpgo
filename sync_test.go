@@ -2,9 +2,11 @@ package main
 
 import (
 	"bytes"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -199,6 +201,57 @@ func TestSyncFile_SelfHealsCorruptedDestination(t *testing.T) {
 	if !bytes.Equal(got, content) {
 		t.Error("syncFile did not repair the corrupted destination")
 	}
+}
+
+// TestSetAttrs_LogsOwnershipOnPermissionDenied checks that a chown which
+// fails for lack of permission is surfaced as a WARN log naming both the
+// ownership that was wanted and what the file was actually left with,
+// instead of being silently swallowed.
+func TestSetAttrs_LogsOwnershipOnPermissionDenied(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: chown to an arbitrary uid would succeed, defeating this test")
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "f.bin")
+	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	realInfo, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	logger.SetOutput(&buf)
+	defer logger.SetOutput(os.Stderr)
+
+	// Any uid/gid other than the current process's own will fail with
+	// EPERM for a non-root caller, whether or not it exists on the system.
+	fake := fakeFileInfo{FileInfo: realInfo, uid: 99999, gid: 99999}
+	if err := setAttrs(path, fake, false); err != nil {
+		t.Fatalf("setAttrs returned an error, want permission errors to be swallowed: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(strings.ToLower(out), "warn") {
+		t.Errorf("log output = %q, want a WARN-level entry", out)
+	}
+	if !strings.Contains(out, "99999") {
+		t.Errorf("log output = %q, want it to mention the wanted uid/gid (99999)", out)
+	}
+}
+
+// fakeFileInfo wraps a real fs.FileInfo but reports an arbitrary uid/gid
+// from Sys(), so tests can exercise setAttrs with ownership that's
+// guaranteed not to match the current process.
+type fakeFileInfo struct {
+	fs.FileInfo
+	uid, gid uint32
+}
+
+func (f fakeFileInfo) Sys() any {
+	return &syscall.Stat_t{Uid: f.uid, Gid: f.gid}
 }
 
 // TestSyncFile_FailsAfterRetriesExhausted checks the give-up path: when the

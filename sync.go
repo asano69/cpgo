@@ -456,8 +456,11 @@ func setAttrs(path string, info fs.FileInfo, isSymlink bool) error {
 		// Ownership can be set on the link itself; mode and mtime of a
 		// symlink are rarely meaningful and are not settable portably
 		// without extra syscalls, so we leave them alone.
-		if err := os.Lchown(path, int(st.Uid), int(st.Gid)); err != nil && !os.IsPermission(err) {
-			return err
+		if err := os.Lchown(path, int(st.Uid), int(st.Gid)); err != nil {
+			if !os.IsPermission(err) {
+				return err
+			}
+			warnOwnershipUnchanged(path, st.Uid, st.Gid, true)
 		}
 		return nil
 	}
@@ -465,13 +468,41 @@ func setAttrs(path string, info fs.FileInfo, isSymlink bool) error {
 	if err := os.Chmod(path, info.Mode().Perm()); err != nil {
 		return err
 	}
-	if err := os.Chown(path, int(st.Uid), int(st.Gid)); err != nil && !os.IsPermission(err) {
-		return err
+	if err := os.Chown(path, int(st.Uid), int(st.Gid)); err != nil {
+		if !os.IsPermission(err) {
+			return err
+		}
+		warnOwnershipUnchanged(path, st.Uid, st.Gid, false)
 	}
 	if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
 		return err
 	}
 	return nil
+}
+
+// warnOwnershipUnchanged logs a chown/lchown that failed for lack of
+// permission, showing both the ownership that was wanted (from the source)
+// and what the destination's ownership actually ended up being, so it's
+// clear exactly how the copy diverges from the source.
+func warnOwnershipUnchanged(path string, wantUid, wantGid uint32, isSymlink bool) {
+	statFn := os.Stat
+	if isSymlink {
+		statFn = os.Lstat
+	}
+
+	fi, err := statFn(path)
+	if err != nil {
+		logger.Warnf("ownership not set on %s: wanted uid=%d gid=%d, and could not stat it afterward: %v",
+			path, wantUid, wantGid, err)
+		return
+	}
+	actual, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		logger.Warnf("ownership not set on %s: wanted uid=%d gid=%d (permission denied)", path, wantUid, wantGid)
+		return
+	}
+	logger.Warnf("ownership not set on %s: wanted uid=%d gid=%d, left as uid=%d gid=%d (permission denied)",
+		path, wantUid, wantGid, actual.Uid, actual.Gid)
 }
 
 func printFinalSummary(p *Progress) {
