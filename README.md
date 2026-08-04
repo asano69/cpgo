@@ -51,7 +51,8 @@ purpose is to guarantee correctness rather than to be fast on repeat runs.
 ## Design notes / tradeoffs
 
 - **Resume granularity is per file, not per byte range.** An interrupted copy
-  leaves a `*.cpgo.tmp` file next to the destination; a later run recopies
+  leaves a `*.NNNNNNNNN.partial` file next to the destination (named after
+  rclone's own local `.partial` convention); a later run recopies
   that file from scratch rather than resuming mid-file. This keeps the
   integrity guarantee simple (every finished file has been fully re-verified)
   at the cost of re-transferring a large file that was interrupted near the

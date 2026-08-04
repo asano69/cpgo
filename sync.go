@@ -311,11 +311,14 @@ func copyVerified(srcPath, destPath string, srcInfo fs.FileInfo, onBytes func(in
 	}
 	defer srcFile.Close()
 
-	tmpPath := destPath + ".cpgo.tmp"
-	tmpFile, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	// A random suffix (via os.CreateTemp) avoids collisions if cpgo is ever
+	// run twice concurrently against the same destination, mirroring how
+	// rclone names its own local .partial files.
+	tmpFile, err := os.CreateTemp(filepath.Dir(destPath), filepath.Base(destPath)+".*.partial")
 	if err != nil {
 		return 0, err
 	}
+	tmpPath := tmpFile.Name()
 	defer os.Remove(tmpPath) // no-op once renamed away
 
 	srcHash := sha256.New()
