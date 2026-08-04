@@ -378,3 +378,23 @@ func TestSyncFile_FailsAfterRetriesExhausted(t *testing.T) {
 		t.Error("destination should not exist after every attempt failed")
 	}
 }
+
+// TestRunSync_ErrorsWhenDestParentMissing checks that, like `cp -R`, runSync
+// never creates missing parent directories for dst -- it only ever creates
+// dst itself, and only if dst's own parent already exists.
+func TestRunSync_ErrorsWhenDestParentMissing(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "photos")
+	if err := os.Mkdir(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(dir, "no-such-parent", "backup")
+
+	err := runSync(src, dst, Options{Jobs: 1})
+	if err == nil {
+		t.Fatal("expected an error when dst's parent directory does not exist, got nil")
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "no-such-parent")); !os.IsNotExist(statErr) {
+		t.Error("dst's missing parent directory should not have been created")
+	}
+}

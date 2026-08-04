@@ -82,10 +82,21 @@ func runSync(src, dst string, opts Options) error {
 	stopProgress := startProgressPrinter(prog, opts)
 	defer stopProgress()
 
-	if !opts.DryRun {
-		if err := os.MkdirAll(dst, 0o755); err != nil {
-			return fmt.Errorf("mkdir %s: %w", dst, err)
+	// Like `cp -R`, this creates at most the single leaf directory dst --
+	// it's an error for dst's own parent directory to be missing, and
+	// nothing above that is ever auto-created.
+	if dstInfo, err := os.Stat(dst); err == nil {
+		if !dstInfo.IsDir() {
+			return fmt.Errorf("cannot overwrite non-directory %s with a directory", dst)
 		}
+	} else if os.IsNotExist(err) {
+		if !opts.DryRun {
+			if err := os.Mkdir(dst, 0o755); err != nil {
+				return fmt.Errorf("mkdir %s: %w", dst, err)
+			}
+		}
+	} else {
+		return fmt.Errorf("stat %s: %w", dst, err)
 	}
 
 	// Pass A: create every directory first, so files and symlinks always have

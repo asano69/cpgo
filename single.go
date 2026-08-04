@@ -22,10 +22,11 @@ func runSyncSingleFile(src, dst string, opts Options) error {
 		destPath = filepath.Join(dst, filepath.Base(src))
 	}
 
-	if !opts.DryRun {
-		if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
-			return fmt.Errorf("creating destination directory: %w", err)
-		}
+	// Like `cp`, this never creates the destination directory: it's an
+	// error for the directory destPath would land in to not already exist.
+	destDir := filepath.Dir(destPath)
+	if info, err := os.Stat(destDir); err != nil || !info.IsDir() {
+		return fmt.Errorf("cannot create regular file %s: no such directory %s", destPath, destDir)
 	}
 
 	prog := &Progress{TotalBytes: srcInfo.Size(), TotalFiles: 1}

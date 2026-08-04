@@ -17,8 +17,8 @@ is copied recursively — into `<dst>/<basename of src>` if `<dst>` already
 exists as a directory, or to `<dst>` itself otherwise, same as `cp -R`. If
 `<src>` is a single file, it's copied into `<dst>` if that's an existing
 directory (keeping the original filename), or to the exact path `<dst>`
-otherwise, creating parent directories as needed. Both modes share the same
-checksum-verified, resumable copy logic.
+otherwise, matching `cp`: the destination directory must already exist.
+Both modes share the same checksum-verified, resumable copy logic.
 
 Directory mode:
 - copies files that are missing or changed
@@ -91,8 +91,8 @@ copied; this behaves like `cp`, not `rclone`.
 # dst is an existing directory: copied in as photos/vacation.jpg
 cpgo photo.jpg /backup/photos
 
-# dst is not an existing directory: copied to that exact path,
-# creating /backup/renamed if needed
+# dst is not an existing directory: copied to that exact path
+# (/backup/renamed must already exist, just like `cp`)
 cpgo photo.jpg /backup/renamed/photo-2026.jpg
 
 # dst is an existing file: overwritten (after checksum verification)
@@ -112,6 +112,11 @@ cpgo photo.jpg /backup/photos/photo.jpg
   atomic rename, and only after their checksum has been confirmed by reading
   them back from disk. So re-running `cpgo` after any kind of interruption
   converges on the same correct result.
+- **Destination directories are never auto-created past one level.** Like
+  `cp`, cpgo requires the directory a destination will land in to already
+  exist; in directory mode it will create the single `dst` directory itself
+  (mirroring `cp -R`), but it never invents missing parent directories for
+  you, in either mode.
 - **Ownership** (`chown`) is attempted on a best-effort basis: if the process
   lacks permission (not running as root), that specific step is skipped
   without failing the whole file.
