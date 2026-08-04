@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
 func main() {
@@ -51,7 +52,13 @@ func run(args []string) int {
 	for i := 0; i < nSrcs; i++ {
 		srcs[i] = filepath.Clean(fs.Arg(i))
 	}
-	dst := filepath.Clean(fs.Arg(nSrcs))
+	// A trailing slash on the raw dst argument means "this must be a
+	// directory", matching `cp`: e.g. `cp file dst/` fails if dst doesn't
+	// exist, rather than creating a regular file named dst. filepath.Clean
+	// strips the slash, so the flag has to be captured before cleaning.
+	rawDst := fs.Arg(nSrcs)
+	dstTrailingSlash := strings.HasSuffix(rawDst, "/")
+	dst := filepath.Clean(rawDst)
 
 	// Like `cp`, giving more than one source requires dst to already exist
 	// as a directory -- there's nowhere else for more than one source to
@@ -76,7 +83,7 @@ func run(args []string) int {
 	// attempted; the overall exit code just ends up non-zero.
 	exitCode := 0
 	for _, src := range srcs {
-		if err := copySrc(src, dst, opts); err != nil {
+		if err := copySrc(src, dst, dstTrailingSlash, opts); err != nil {
 			logger.Error(err)
 			exitCode = 1
 		}
@@ -87,16 +94,18 @@ func run(args []string) int {
 // copySrc copies a single src (file or directory) into/to dst, dispatching
 // to directory or single-file mode. Used for every source, whether cpgo was
 // given just one or several.
-func copySrc(src, dst string, opts Options) error {
+func copySrc(src, dst string, dstTrailingSlash bool, opts Options) error {
 	info, err := os.Stat(src)
 	if err != nil {
 		return err
 	}
 	switch {
 	case info.IsDir():
+		// A trailing slash on dst doesn't constrain directory-mode copies:
+		// `cp -R` happily creates dst as a fresh directory either way.
 		return runSync(src, resolveDestDir(src, dst), opts)
 	case info.Mode().IsRegular():
-		return runSyncSingleFile(src, dst, opts)
+		return runSyncSingleFile(src, dst, dstTrailingSlash, opts)
 	default:
 		return fmt.Errorf("%s: unsupported file type", src)
 	}

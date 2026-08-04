@@ -128,6 +128,9 @@ cpgo photo.jpg /backup/photos/photo.jpg
   exist; in directory mode it will create the single `dst` directory itself
   (mirroring `cp -R`), but it never invents missing parent directories for
   you, in either mode.
+- **A trailing slash on `<dst>` forces it to be treated as a directory** in
+  single-file mode, matching `cp`: `cpgo file dst/` fails if `dst` doesn't
+  already exist, rather than creating a regular file named `dst`.
 - **Ownership** (`chown`) is attempted on a best-effort basis: if the process
   lacks permission (not running as root), that specific step is skipped
   without failing the whole file.

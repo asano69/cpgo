@@ -10,15 +10,24 @@ import (
 // checksum-verified, resumable copy logic as tree sync. If dst is an
 // existing directory, the file is copied into it under its original name
 // (like `cp src dir/`); otherwise dst is treated as the destination file's
-// exact path.
-func runSyncSingleFile(src, dst string, opts Options) error {
+// exact path. dstTrailingSlash records whether the dst argument, before
+// path cleaning, ended in "/" -- like `cp`, that forces dst to be treated
+// as a directory, and it's an error if it isn't one.
+func runSyncSingleFile(src, dst string, dstTrailingSlash bool, opts Options) error {
 	srcInfo, err := os.Stat(src)
 	if err != nil {
 		return fmt.Errorf("stat %s: %w", src, err)
 	}
 
+	dstInfo, statErr := os.Stat(dst)
+	dstIsDir := statErr == nil && dstInfo.IsDir()
+
+	if dstTrailingSlash && !dstIsDir {
+		return fmt.Errorf("cannot create regular file %s/: not a directory", dst)
+	}
+
 	destPath := dst
-	if dstInfo, err := os.Stat(dst); err == nil && dstInfo.IsDir() {
+	if dstIsDir {
 		destPath = filepath.Join(dst, filepath.Base(src))
 	}
 
