@@ -39,6 +39,7 @@ Directory mode:
 |---------------|-----------|---------------------------------------------------------------------|
 | `-no-delete`  | false     | keep extra files in `<dst>` instead of removing them (directory mode only) |
 | `-dry-run`    | false     | print what would happen without touching anything                   |
+| `-in-place`   | false     | write directly to the destination instead of a temp file + rename    |
 | `-jobs`       | NumCPU    | number of files copied concurrently (directory mode only)             |
 | `-retries`    | 2         | extra attempts after a checksum mismatch before giving up on a file  |
 | `-verbose`    | false     | print each action taken                                              |
@@ -64,6 +65,13 @@ purpose is to guarantee correctness rather than to be fast on repeat runs.
 - **Ownership** (`chown`) is attempted on a best-effort basis: if the process
   lacks permission (not running as root), that specific step is skipped
   without failing the whole file.
+- **`-in-place`** writes directly to the destination file instead of a temp
+  file + rename, so updating a file never needs headroom for two copies of
+  it at once. This is a real safety trade-off, not a free optimization: the
+  destination is truncated the moment the copy starts, so a copy that fails
+  or is interrupted partway leaves it overwritten with bad or partial data,
+  instead of the default mode's guarantee that a failed copy never disturbs
+  what was already there.
 - **Confirmed corruption stops the run immediately.** If a checksum mismatch
   survives every retry, that's treated as evidence of a real problem (bad
   storage, bad RAM, etc.), not just a bad file, so cpgo aborts the whole sync

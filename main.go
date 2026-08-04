@@ -29,6 +29,9 @@ func run(args []string) int {
 
 	noDelete := fs.Bool("no-delete", false, "don't delete files in <dst> that are missing from <src> (directory mode only)")
 	dryRun := fs.Bool("dry-run", false, "show what would be done without changing anything")
+	inPlace := fs.Bool("in-place", false, "write directly to the destination instead of a temp file + rename; "+
+		"uses less spare disk space per file, but a copy that fails or is interrupted midway leaves the "+
+		"destination corrupted instead of untouched")
 	jobs := fs.Int("jobs", runtime.NumCPU(), "number of files to copy concurrently (directory mode only)")
 	retries := fs.Int("retries", 2, "extra attempts if a copy fails checksum verification")
 	verbose := fs.Bool("verbose", false, "print each action taken")
@@ -53,6 +56,7 @@ func run(args []string) int {
 	opts := Options{
 		Delete:  !*noDelete,
 		DryRun:  *dryRun,
+		InPlace: *inPlace,
 		Jobs:    *jobs,
 		Retries: *retries,
 		Verbose: *verbose,

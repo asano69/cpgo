@@ -25,7 +25,7 @@ func TestCopyVerified_Success(t *testing.T) {
 	}
 	destPath := filepath.Join(dir, "dst.bin")
 
-	n, err := copyVerified(srcPath, destPath, srcInfo, nil)
+	n, err := copyVerified(srcPath, destPath, srcInfo, false, nil)
 	if err != nil {
 		t.Fatalf("copyVerified: %v", err)
 	}
@@ -63,7 +63,6 @@ func TestCopyVerified_DetectsCorruptionDuringWrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	destPath := filepath.Join(dir, "dst.bin")
-	tmpPath := destPath + ".cpgo.tmp"
 
 	calls := 0
 	corruptOnSecondChunk := func(int64) {
@@ -71,6 +70,7 @@ func TestCopyVerified_DetectsCorruptionDuringWrite(t *testing.T) {
 		if calls != 2 {
 			return // let the first chunk land on disk untouched
 		}
+		tmpPath := findPartialFile(t, dir)
 		f, err := os.OpenFile(tmpPath, os.O_WRONLY, 0)
 		if err != nil {
 			t.Fatalf("opening temp file to corrupt it: %v", err)
@@ -81,7 +81,7 @@ func TestCopyVerified_DetectsCorruptionDuringWrite(t *testing.T) {
 		}
 	}
 
-	_, err = copyVerified(srcPath, destPath, srcInfo, corruptOnSecondChunk)
+	_, err = copyVerified(srcPath, destPath, srcInfo, false, corruptOnSecondChunk)
 	if err == nil {
 		t.Fatal("expected a checksum mismatch error, got nil")
 	}
@@ -91,9 +91,24 @@ func TestCopyVerified_DetectsCorruptionDuringWrite(t *testing.T) {
 	if _, err := os.Stat(destPath); !os.IsNotExist(err) {
 		t.Error("destination should not exist after a failed copy")
 	}
-	if _, err := os.Stat(tmpPath); !os.IsNotExist(err) {
-		t.Error("temp file should be cleaned up after a failed copy")
+	if matches, _ := filepath.Glob(filepath.Join(dir, "dst.bin.*.partial")); len(matches) != 0 {
+		t.Errorf("temp file(s) should be cleaned up after a failed copy, found: %v", matches)
 	}
+}
+
+// findPartialFile locates the single "*.partial" temp file that copyVerified
+// creates next to a destination, so tests can reach into it while a copy is
+// still in flight. Fails the test if there isn't exactly one.
+func findPartialFile(t *testing.T, dir string) string {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(dir, "*.partial"))
+	if err != nil {
+		t.Fatalf("globbing for temp file: %v", err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("found %d *.partial files in %s, want exactly 1: %v", len(matches), dir, matches)
+	}
+	return matches[0]
 }
 
 // TestCopyVerified_DetectsSourceChangedSize covers the other half of "the
@@ -118,12 +133,56 @@ func TestCopyVerified_DetectsSourceChangedSize(t *testing.T) {
 	}
 
 	destPath := filepath.Join(dir, "dst.bin")
-	_, err = copyVerified(srcPath, destPath, staleInfo, nil)
+	_, err = copyVerified(srcPath, destPath, staleInfo, false, nil)
 	if err == nil {
 		t.Fatal("expected an error, got nil")
 	}
 	if !strings.Contains(err.Error(), "source changed size") {
 		t.Errorf("error = %v, want a source-changed-size error", err)
+	}
+}
+
+// TestCopyVerified_InPlace_WritesDirectlyToDestination checks that with
+// inPlace=true, copyVerified writes straight to destPath -- no ".partial"
+// temp file appears next to it -- and that it correctly overwrites whatever
+// content was already there, including shrinking a file that got smaller.
+func TestCopyVerified_InPlace_WritesDirectlyToDestination(t *testing.T) {
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "src.bin")
+	content := []byte("new content, shorter")
+	if err := os.WriteFile(srcPath, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	srcInfo, err := os.Stat(srcPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	destPath := filepath.Join(dir, "dst.bin")
+	if err := os.WriteFile(destPath, []byte("this is the old, longer content that must be gone"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := copyVerified(srcPath, destPath, srcInfo, true, nil)
+	if err != nil {
+		t.Fatalf("copyVerified: %v", err)
+	}
+	if n != int64(len(content)) {
+		t.Errorf("copied %d bytes, want %d", n, len(content))
+	}
+	got, err := os.ReadFile(destPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, content) {
+		t.Errorf("dest content = %q, want %q", got, content)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		t.Errorf("dir has %d entries, want 2 (src.bin, dst.bin) with no leftover temp file: %v", len(entries), entries)
 	}
 }
 

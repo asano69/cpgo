@@ -24,8 +24,9 @@ var ErrChecksumMismatch = errors.New("checksum mismatch after copy: destination 
 type Options struct {
 	Delete  bool // remove destination entries that no longer exist in the source
 	DryRun  bool
-	Jobs    int // concurrent file copies
-	Retries int // extra attempts after a checksum mismatch
+	InPlace bool // write directly to the destination instead of temp file + rename
+	Jobs    int  // concurrent file copies
+	Retries int  // extra attempts after a checksum mismatch
 	Verbose bool
 }
 
@@ -234,7 +235,7 @@ func syncFile(srcPath, destPath string, srcInfo fs.FileInfo, opts Options, prog 
 			logger.Infof("retrying %s (attempt %d/%d)", destPath, i+1, attempts)
 		}
 		var attemptBytes int64
-		_, err := copyVerified(srcPath, destPath, srcInfo, func(n int64) {
+		_, err := copyVerified(srcPath, destPath, srcInfo, opts.InPlace, func(n int64) {
 			attemptBytes += n
 			prog.DoneBytes.Add(n)
 		})
@@ -299,42 +300,32 @@ func isUpToDate(srcPath, destPath string, srcInfo fs.FileInfo) (bool, error) {
 	return srcSum == dstSum, nil
 }
 
-// copyVerified copies srcPath into a temp file next to destPath, verifies the
-// bytes actually landed on disk correctly by re-reading and re-hashing the
-// temp file, and only then renames it into place. onBytes is called as data
-// is read from the source, so callers can drive a live progress display; it
-// may be nil. It returns the number of bytes copied on success.
-func copyVerified(srcPath, destPath string, srcInfo fs.FileInfo, onBytes func(int64)) (int64, error) {
+// copyVerified copies srcPath to destPath, verifying the bytes actually
+// landed on disk correctly by re-reading and re-hashing them. onBytes is
+// called as data is read from the source, so callers can drive a live
+// progress display; it may be nil. It returns the number of bytes copied on
+// success.
+//
+// By default (inPlace=false) it writes into a temp file next to destPath and
+// only renames it into place after verification succeeds, so a failed or
+// interrupted copy never disturbs whatever was already at destPath. With
+// inPlace=true it writes straight to destPath instead: this needs no spare
+// disk space for a second copy of the file, but a copy that fails partway
+// leaves destPath overwritten with bad or partial data rather than untouched
+// -- the caller is trading away that safety net on purpose.
+func copyVerified(srcPath, destPath string, srcInfo fs.FileInfo, inPlace bool, onBytes func(int64)) (int64, error) {
 	srcFile, err := os.Open(srcPath)
 	if err != nil {
 		return 0, err
 	}
 	defer srcFile.Close()
 
-	// A random suffix (via os.CreateTemp) avoids collisions if cpgo is ever
-	// run twice concurrently against the same destination, mirroring how
-	// rclone names its own local .partial files.
-	tmpFile, err := os.CreateTemp(filepath.Dir(destPath), filepath.Base(destPath)+".*.partial")
+	dstFile, writePath, err := openCopyDest(destPath, inPlace)
 	if err != nil {
 		return 0, err
 	}
-	tmpPath := tmpFile.Name()
-	defer os.Remove(tmpPath) // no-op once renamed away
-
-	// Reserve the full destination size up front. This does not double
-	// disk usage -- it just marks the blocks the write is about to fill
-	// as allocated, instead of letting the file grow one write at a
-	// time. The payoff is failing fast on ENOSPC before a large copy
-	// runs to completion, rather than discovering the disk is full
-	// after most of the bytes are already written. Filesystems that
-	// don't support fallocate (some network mounts) are left to grow
-	// the file the normal way.
-	if srcInfo.Size() > 0 {
-		if err := syscall.Fallocate(int(tmpFile.Fd()), 0, 0, srcInfo.Size()); err != nil &&
-			!errors.Is(err, syscall.ENOTSUP) && !errors.Is(err, syscall.EOPNOTSUPP) {
-			tmpFile.Close()
-			return 0, fmt.Errorf("preallocating %s: %w", tmpPath, err)
-		}
+	if !inPlace {
+		defer os.Remove(writePath) // no-op once renamed away
 	}
 
 	srcHash := sha256.New()
@@ -342,16 +333,16 @@ func copyVerified(srcPath, destPath string, srcInfo fs.FileInfo, onBytes func(in
 	if onBytes != nil {
 		reader = &countingReader{r: reader, onRead: onBytes}
 	}
-	n, err := io.Copy(tmpFile, reader)
+	n, err := io.Copy(dstFile, reader)
 	if err != nil {
-		tmpFile.Close()
+		dstFile.Close()
 		return 0, err
 	}
-	if err := tmpFile.Sync(); err != nil {
-		tmpFile.Close()
+	if err := dstFile.Sync(); err != nil {
+		dstFile.Close()
 		return 0, fmt.Errorf("fsync: %w", err)
 	}
-	if err := tmpFile.Close(); err != nil {
+	if err := dstFile.Close(); err != nil {
 		return 0, err
 	}
 
@@ -360,7 +351,7 @@ func copyVerified(srcPath, destPath string, srcInfo fs.FileInfo, onBytes func(in
 		return 0, fmt.Errorf("source changed size during copy")
 	}
 
-	dstSum, err := hashFile(tmpPath)
+	dstSum, err := hashFile(writePath)
 	if err != nil {
 		return 0, err
 	}
@@ -368,10 +359,34 @@ func copyVerified(srcPath, destPath string, srcInfo fs.FileInfo, onBytes func(in
 		return 0, ErrChecksumMismatch
 	}
 
-	if err := os.Rename(tmpPath, destPath); err != nil {
+	if inPlace {
+		return n, nil // already written straight to destPath, nothing to rename
+	}
+	if err := os.Rename(writePath, destPath); err != nil {
 		return 0, err
 	}
 	return n, nil
+}
+
+// openCopyDest opens the file copy data should be written to, returning it
+// along with the path actually opened. With inPlace=false (the default) this
+// is a fresh temp file next to destPath, named with a random suffix (via
+// os.CreateTemp) so two concurrent cpgo runs against the same destination
+// don't collide -- mirroring how rclone names its own local .partial files.
+// With inPlace=true it opens destPath directly, truncating it immediately.
+func openCopyDest(destPath string, inPlace bool) (*os.File, string, error) {
+	if inPlace {
+		f, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+		if err != nil {
+			return nil, "", err
+		}
+		return f, destPath, nil
+	}
+	f, err := os.CreateTemp(filepath.Dir(destPath), filepath.Base(destPath)+".*.partial")
+	if err != nil {
+		return nil, "", err
+	}
+	return f, f.Name(), nil
 }
 
 // countingReader calls onRead with the number of bytes returned by each Read,
