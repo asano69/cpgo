@@ -126,8 +126,7 @@ func runSync(src, dst string, opts Options) error {
 
 		if e.IsSymlink {
 			if err := syncSymlink(srcPath, destPath, e.Info, opts); err != nil {
-				logger.WithError(err).Warnf("symlink %s", e.RelPath)
-				prog.Failed.Add(1)
+				warnAndCountFailure(prog, err, "symlink %s", e.RelPath)
 			}
 			prog.DoneFiles.Add(1)
 			continue
@@ -169,8 +168,7 @@ func runSync(src, dst string, opts Options) error {
 			continue
 		}
 		if err := syncHardlink(primaryDestPath, destPath); err != nil {
-			logger.WithError(err).Warnf("hardlink %s", rel)
-			prog.Failed.Add(1)
+			warnAndCountFailure(prog, err, "hardlink %s", rel)
 		}
 		prog.DoneFiles.Add(1)
 	}
@@ -254,13 +252,21 @@ func syncFile(srcPath, destPath string, srcInfo fs.FileInfo, opts Options, prog 
 // logged as an error and stops the whole run via prog.triggerAbort; anything
 // else is logged as a warning and the sync carries on to other files.
 func handleFileSyncError(prog *Progress, relPath string, err error) {
-	prog.Failed.Add(1)
 	if errors.Is(err, ErrChecksumMismatch) {
+		prog.Failed.Add(1)
 		logger.WithError(err).Errorf("file corruption detected: %s", relPath)
 		prog.triggerAbort(fmt.Errorf("file corruption detected: %s: %w", relPath, err))
 		return
 	}
-	logger.WithError(err).Warnf("%s", relPath)
+	warnAndCountFailure(prog, err, "%s", relPath)
+}
+
+// warnAndCountFailure records a per-entry failure that doesn't abort the
+// whole sync (unlike a confirmed checksum mismatch, handled directly in
+// handleFileSyncError above) and logs it at warning level.
+func warnAndCountFailure(prog *Progress, err error, format string, args ...interface{}) {
+	prog.Failed.Add(1)
+	logger.WithError(err).Warnf(format, args...)
 }
 
 // isUpToDate decides whether destPath already holds a correct copy of
@@ -492,20 +498,14 @@ func warnOwnershipUnchanged(path string, wantUid, wantGid uint32, isSymlink bool
 	if isSymlink {
 		statFn = os.Lstat
 	}
-
-	fi, err := statFn(path)
-	if err != nil {
-		logger.Warnf("ownership not set on %s: wanted uid=%d gid=%d, and could not stat it afterward: %v",
-			path, wantUid, wantGid, err)
-		return
-	}
-	actual, ok := fi.Sys().(*syscall.Stat_t)
-	if !ok {
-		logger.Warnf("ownership not set on %s: wanted uid=%d gid=%d (permission denied)", path, wantUid, wantGid)
-		return
-	}
-	logger.Warnf("ownership not set on %s: wanted uid=%d gid=%d, left as uid=%d gid=%d (permission denied)",
-		path, wantUid, wantGid, actual.Uid, actual.Gid)
+	warnAttrUnchanged(path, "ownership", fmt.Sprintf("uid=%d gid=%d", wantUid, wantGid), statFn,
+		func(fi fs.FileInfo) (string, bool) {
+			st, ok := fi.Sys().(*syscall.Stat_t)
+			if !ok {
+				return "", false
+			}
+			return fmt.Sprintf("uid=%d gid=%d", st.Uid, st.Gid), true
+		})
 }
 
 // warnPermissionUnchanged logs a chmod that failed for lack of permission
@@ -515,14 +515,30 @@ func warnOwnershipUnchanged(path string, wantUid, wantGid uint32, isSymlink bool
 // Modes are printed in octal (e.g. 755), matching how permissions are
 // normally written and how the user is likely to think of them.
 func warnPermissionUnchanged(path string, wantMode fs.FileMode) {
-	fi, err := os.Stat(path)
+	warnAttrUnchanged(path, "permissions", fmt.Sprintf("mode=%03o", wantMode.Perm()), os.Stat,
+		func(fi fs.FileInfo) (string, bool) {
+			return fmt.Sprintf("mode=%03o", fi.Mode().Perm()), true
+		})
+}
+
+// warnAttrUnchanged is the shared shape behind warnOwnershipUnchanged and
+// warnPermissionUnchanged: an attribute-setting syscall failed for lack of
+// permission, so we stat the path afterward and log both what was wanted
+// and (if it can be determined from Sys()) what the attribute was actually
+// left as.
+func warnAttrUnchanged(path, attr, wanted string, statFn func(string) (fs.FileInfo, error), actual func(fs.FileInfo) (string, bool)) {
+	fi, err := statFn(path)
 	if err != nil {
-		logger.Warnf("permissions not set on %s: wanted mode=%03o, and could not stat it afterward: %v",
-			path, wantMode.Perm(), err)
+		logger.Warnf("%s not set on %s: wanted %s, and could not stat it afterward: %v",
+			attr, path, wanted, err)
 		return
 	}
-	logger.Warnf("permissions not set on %s: wanted mode=%03o, left as mode=%03o (permission denied)",
-		path, wantMode.Perm(), fi.Mode().Perm())
+	if got, ok := actual(fi); ok {
+		logger.Warnf("%s not set on %s: wanted %s, left as %s (permission denied)",
+			attr, path, wanted, got)
+		return
+	}
+	logger.Warnf("%s not set on %s: wanted %s (permission denied)", attr, path, wanted)
 }
 
 func printFinalSummary(p *Progress) {
