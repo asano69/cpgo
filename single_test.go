@@ -46,6 +46,22 @@ func TestRunSyncSingleFile_TrailingSlashRequiresExistingDirectory(t *testing.T) 
 	}
 }
 
+// TestRunSyncSingleFile_ErrorsWhenSrcAndDstAreSameFile checks that copying a
+// file onto itself is refused, the same way `cp file file` errors instead
+// of (in the worst case) truncating the file while trying to read it.
+func TestRunSyncSingleFile_ErrorsWhenSrcAndDstAreSameFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "file.bin")
+	if err := os.WriteFile(path, []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := runSyncSingleFile(path, path, false, Options{})
+	if err == nil {
+		t.Fatal("expected an error when src and dst are the same file, got nil")
+	}
+}
+
 // TestRunSyncSingleFile_TrailingSlashIntoExistingDirectory checks the
 // success case of the same rule: when dst does exist as a directory, a
 // trailing slash makes no difference and the file is copied into it,

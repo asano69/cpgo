@@ -31,6 +31,10 @@ func runSyncSingleFile(src, dst string, dstTrailingSlash bool, opts Options) err
 		destPath = filepath.Join(dst, filepath.Base(src))
 	}
 
+	if err := checkNotSameFile(src, destPath); err != nil {
+		return err
+	}
+
 	// Like `cp`, this never creates the destination directory: it's an
 	// error for the directory destPath would land in to not already exist.
 	destDir := filepath.Dir(destPath)

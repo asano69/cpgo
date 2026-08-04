@@ -66,6 +66,10 @@ func (p *Progress) aborted() (bool, error) {
 // opts, printing progress as it goes. Like `cp -R`, it never removes
 // anything already present at dst.
 func runSync(src, dst string, opts Options) error {
+	if err := checkNotIntoSelf(src, dst); err != nil {
+		return err
+	}
+
 	tree, err := scanTree(src)
 	if err != nil {
 		return fmt.Errorf("scanning source: %w", err)

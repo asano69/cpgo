@@ -379,6 +379,26 @@ func TestSyncFile_FailsAfterRetriesExhausted(t *testing.T) {
 	}
 }
 
+// TestRunSync_ErrorsWhenDestIsInsideSource checks that runSync refuses to
+// copy a directory into one of its own subdirectories, the same trap `cp -R
+// dir dir/backup` guards against.
+func TestRunSync_ErrorsWhenDestIsInsideSource(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "photos")
+	if err := os.Mkdir(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(src, "backup")
+
+	err := runSync(src, dst, Options{Jobs: 1})
+	if err == nil {
+		t.Fatal("expected an error when dst is nested inside src, got nil")
+	}
+	if _, statErr := os.Stat(dst); !os.IsNotExist(statErr) {
+		t.Error("nested destination should not have been created")
+	}
+}
+
 // TestRunSync_ErrorsWhenDestParentMissing checks that, like `cp -R`, runSync
 // never creates missing parent directories for dst -- it only ever creates
 // dst itself, and only if dst's own parent already exists.
