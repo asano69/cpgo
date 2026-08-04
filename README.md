@@ -12,8 +12,10 @@ Checksum-verified mirroring copy tool.
 cpgo [flags] <src> <dst>
 ```
 
-If `<src>` is a directory, mirrors its contents into `<dst>`. If `<src>` is a
-single file, copies just that file — into `<dst>` if it's an existing
+Behaves like `cp -dR --preserve=all`, always. If `<src>` is a directory, it
+is copied recursively — into `<dst>/<basename of src>` if `<dst>` already
+exists as a directory, or to `<dst>` itself otherwise, same as `cp -R`. If
+`<src>` is a single file, it's copied into `<dst>` if that's an existing
 directory (keeping the original filename), or to the exact path `<dst>`
 otherwise, creating parent directories as needed. Both modes share the same
 checksum-verified, resumable copy logic.
@@ -27,17 +29,16 @@ Directory mode:
   Metadata (size/mtime) is only ever used as a cheap pre-filter to skip
   hashing a file whose size obviously differs; it is never treated as proof
   that a file is correct on its own.
-- deletes anything in `<dst>` that no longer exists in `<src>` (unless
-  `-no-delete` is given)
 - preserves permissions, ownership (uid/gid), modification time, symlinks
   and hardlinks
 - shows overall progress (bytes and file count) while it runs
+- never deletes anything at `<dst>` — extra files there are left alone, just
+  like `cp -R` never touches files that aren't in `<src>`
 
 ## Flags
 
 | Flag          | Default   | Meaning                                                            |
 |---------------|-----------|---------------------------------------------------------------------|
-| `-no-delete`  | false     | keep extra files in `<dst>` instead of removing them (directory mode only) |
 | `-dry-run`    | false     | print what would happen without touching anything                   |
 | `-in-place`   | false     | write directly to the destination instead of a temp file + rename    |
 | `-jobs`       | NumCPU    | number of files copied concurrently (directory mode only)             |
@@ -51,29 +52,26 @@ purpose is to guarantee correctness rather than to be fast on repeat runs.
 
 ## Examples
 
-**Directory mode.** `<src>`'s contents are mirrored into `<dst>`, the same
-way `rclone sync <src> <dst>` works: a trailing slash on `<src>` makes no
-difference, and the result is the same whether `<dst>` already exists or
-not.
+**Directory mode.** Behaves like `cp -dR --preserve=all <src> <dst>`: a
+trailing slash on `<src>` makes no difference, but whether `<dst>` already
+exists as a directory changes where things land, just like `cp -R`.
 
 ```
-# dst doesn't exist yet: created, then filled with src's contents
+# dst doesn't exist yet: created as a copy of src itself
+# (dst/one.txt, dst/two.txt, ...)
 cpgo /data/photos /backup/photos
 
-# dst already exists: its contents are made to match src exactly,
-# including deleting anything under dst that isn't in src
+# dst already exists as a directory: src is copied *into* it
+# (/backup/photos/photos/one.txt, ...), matching `cp -R`
 cpgo /data/photos /backup/photos
 
-# trailing slash on src is a no-op, unlike rsync
+# trailing slash on src is a no-op, like cp and unlike rsync
 cpgo /data/photos/ /backup/photos
 
 # preview what would happen without touching anything
 cpgo -dry-run /data/photos /backup/photos
 
-# keep files under dst that aren't in src, instead of deleting them
-cpgo -no-delete /data/photos /backup/photos
-
-# show every file copied, linked or deleted
+# show every file copied or linked
 cpgo -verbose /data/photos /backup/photos
 
 # limit concurrency (e.g. for a slow disk) and allow more retries

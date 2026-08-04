@@ -22,7 +22,6 @@ var ErrChecksumMismatch = errors.New("checksum mismatch after copy: destination 
 
 // Options controls how the sync runs.
 type Options struct {
-	Delete  bool // remove destination entries that no longer exist in the source
 	DryRun  bool
 	InPlace bool // write directly to the destination instead of temp file + rename
 	Jobs    int  // concurrent file copies
@@ -63,7 +62,9 @@ func (p *Progress) aborted() (bool, error) {
 	return p.abortErr != nil, p.abortErr
 }
 
-// runSync mirrors src into dst according to opts, printing progress as it goes.
+// runSync recursively copies the tree rooted at src into dst according to
+// opts, printing progress as it goes. Like `cp -R`, it never removes
+// anything already present at dst.
 func runSync(src, dst string, opts Options) error {
 	tree, err := scanTree(src)
 	if err != nil {
@@ -187,12 +188,6 @@ func runSync(src, dst string, opts Options) error {
 		}
 		if err := setAttrs(destPath, e.Info, false); err != nil {
 			logger.WithError(err).Warnf("attrs %s", e.RelPath)
-		}
-	}
-
-	if opts.Delete {
-		if err := deleteExtraneous(dst, tree, opts); err != nil {
-			return fmt.Errorf("deleting extraneous entries: %w", err)
 		}
 	}
 

@@ -1,6 +1,7 @@
 // Command cpgo copies files with checksum verification, resuming cleanly if
-// interrupted. Given a directory, it mirrors the whole tree; given a single
-// file, it copies just that file.
+// interrupted. It behaves like `cp -dR --preserve=all`, always: given a
+// directory it copies the whole tree recursively, and given a single file
+// it copies just that file.
 package main
 
 import (
@@ -19,15 +20,14 @@ func run(args []string) int {
 	fs := flag.NewFlagSet("cpgo", flag.ContinueOnError)
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "usage: cpgo [flags] <src> <dst>\n\n")
-		fmt.Fprintf(os.Stderr, "If <src> is a directory, mirrors its contents into <dst>: copies what's\n")
-		fmt.Fprintf(os.Stderr, "missing or changed, and (by default) removes anything in <dst> that no\n")
-		fmt.Fprintf(os.Stderr, "longer exists in <src>. If <src> is a single file, copies just that file\n")
-		fmt.Fprintf(os.Stderr, "(into <dst> if it's a directory, or to the exact path <dst> otherwise).\n")
-		fmt.Fprintf(os.Stderr, "Every copy is verified by checksum, with no way to disable it.\n\n")
+		fmt.Fprintf(os.Stderr, "Behaves like `cp -dR --preserve=all`, always. If <src> is a directory, it\n")
+		fmt.Fprintf(os.Stderr, "is copied recursively: into <dst>/<basename of src> if <dst> already exists\n")
+		fmt.Fprintf(os.Stderr, "as a directory, or to <dst> itself otherwise. If <src> is a single file, it\n")
+		fmt.Fprintf(os.Stderr, "is copied into <dst> if <dst> is a directory, or to the exact path <dst>\n")
+		fmt.Fprintf(os.Stderr, "otherwise. Every copy is verified by checksum, with no way to disable it.\n\n")
 		fs.PrintDefaults()
 	}
 
-	noDelete := fs.Bool("no-delete", false, "don't delete files in <dst> that are missing from <src> (directory mode only)")
 	dryRun := fs.Bool("dry-run", false, "show what would be done without changing anything")
 	inPlace := fs.Bool("in-place", false, "write directly to the destination instead of a temp file + rename; "+
 		"uses less spare disk space per file, but a copy that fails or is interrupted midway leaves the "+
@@ -54,7 +54,6 @@ func run(args []string) int {
 	}
 
 	opts := Options{
-		Delete:  !*noDelete,
 		DryRun:  *dryRun,
 		InPlace: *inPlace,
 		Jobs:    *jobs,
@@ -64,7 +63,7 @@ func run(args []string) int {
 
 	switch {
 	case info.IsDir():
-		err = runSync(src, dst, opts)
+		err = runSync(src, resolveDestDir(src, dst), opts)
 	case info.Mode().IsRegular():
 		err = runSyncSingleFile(src, dst, opts)
 	default:
@@ -77,4 +76,15 @@ func run(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+// resolveDestDir applies `cp -R` semantics for a directory source: if dst
+// already exists as a directory, src is copied *into* it (dst/basename(src)),
+// same as `cp -R src dst` when dst pre-exists. Otherwise dst itself becomes
+// the copy of src, same as `cp -R src dst` creating a fresh dst.
+func resolveDestDir(src, dst string) string {
+	if info, err := os.Stat(dst); err == nil && info.IsDir() {
+		return filepath.Join(dst, filepath.Base(src))
+	}
+	return dst
 }
