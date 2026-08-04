@@ -16,7 +16,7 @@ import (
 
 // version is cpgo's release version, shown by -version. Keep this in sync
 // with the "version" field in flake.nix.
-const version = "0.1.0"
+const version = "0.1.1"
 
 func main() {
 	os.Exit(run(os.Args[1:]))
