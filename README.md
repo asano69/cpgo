@@ -2,6 +2,21 @@
 
 Checksum-verified mirroring copy tool.
 
+
+## Installation
+
+```sh
+$ go install github.com/asano69/cpgo@latest
+```
+
+To uninstall:
+
+```sh
+$ rm "$(which cpgo)" # Remove an executable
+```
+
+## Basic Usage
+
 ```
 cpgo [flags] <src>...<dst>
 ```
