@@ -9,7 +9,7 @@
 Checksum-verified mirroring copy tool.
 
 ```
-cpgo [flags] <src> <dst>
+cpgo [flags] <src>...<dst>
 ```
 
 Behaves like `cp -dR --preserve=all`, always. If `<src>` is a directory, it
@@ -19,6 +19,12 @@ exists as a directory, or to `<dst>` itself otherwise, same as `cp -R`. If
 directory (keeping the original filename), or to the exact path `<dst>`
 otherwise, matching `cp`: the destination directory must already exist.
 Both modes share the same checksum-verified, resumable copy logic.
+
+More than one `<src>` can be given, exactly like `cp a b c dst`: every
+source is then copied into `<dst>`, which must already exist as a
+directory (an error, not something cpgo creates for you, if it doesn't). A
+failure on one source doesn't stop the others from being attempted, but the
+process exits non-zero if any of them failed.
 
 Directory mode:
 - copies files that are missing or changed
@@ -87,9 +93,14 @@ cpgo -in-place /data/photos /backup/photos
 **Single-file mode.** `<src>` is a regular file, so only that file is
 copied; this behaves like `cp`, not `rclone`.
 
-```
-# dst is an existing directory: copied in as photos/vacation.jpg
-cpgo photo.jpg /backup/photos
+```sh
+# dst is an existing file: overwritten (after checksum verification)
+
+cpgo photo.jpg /backup/photos/photo.jpg
+
+# multiple sources: dst must already exist as a directory, like cp
+
+cpgo photo1.jpg photo2.jpg /data/more-photos /backup/photos
 
 # dst is not an existing directory: copied to that exact path
 # (/backup/renamed must already exist, just like `cp`)
