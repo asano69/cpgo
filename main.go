@@ -7,6 +7,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -95,11 +96,18 @@ func run(args []string) int {
 // to directory or single-file mode. Used for every source, whether cpgo was
 // given just one or several.
 func copySrc(src, dst string, dstTrailingSlash bool, opts Options) error {
-	info, err := os.Stat(src)
+	// Lstat, not Stat: cp -a implies -d (no-dereference), so a src that is
+	// itself a symlink must be copied as a symlink, not followed. Stat
+	// would both dereference a symlink to a directory (copying its
+	// contents instead of the link itself) and fail outright on a
+	// dangling link, which archival use has to tolerate.
+	info, err := os.Lstat(src)
 	if err != nil {
 		return err
 	}
 	switch {
+	case info.Mode()&fs.ModeSymlink != 0:
+		return runSyncSingleSymlink(src, dst, dstTrailingSlash, opts, info)
 	case info.IsDir():
 		// A trailing slash on dst doesn't constrain directory-mode copies:
 		// `cp -R` happily creates dst as a fresh directory either way.
