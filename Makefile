@@ -5,7 +5,7 @@ BINARY := cpgo
 build:
 	go build -o $(BINARY) .
 
-install:
+install: build
 	go install .
 
 uninstall:
